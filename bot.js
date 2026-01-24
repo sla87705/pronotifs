@@ -10,55 +10,55 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ===== Stockage temporaire utilisateurs =====
+// ===== Stockage mémoire =====
 const users = {}; 
-// users[chatId] = { step, identifiant, password, messagesToDelete: [] }
-
-// ===== Utilitaire nettoyage =====
-async function cleanChat(chatId) {
-  if (!users[chatId]) return;
-  for (const msgId of users[chatId].messagesToDelete || []) {
-    try {
-      await bot.deleteMessage(chatId, msgId);
-    } catch {}
-  }
-  users[chatId].messagesToDelete = [];
-}
+// users[chatId] = { identifiant, password, waitingCredentials }
 
 // ===== Accueil =====
-async function showAccueil(chatId) {
-  users[chatId] = { messagesToDelete: [] };
+async function accueil(chatId) {
+  const user = users[chatId];
 
-  const msg = await bot.sendMessage(
-    chatId,
-    `👋 *Bienvenue sur Pronotifs*\n\n` +
-    `Ce bot te permet de recevoir des notifications lorsqu’une nouvelle information apparaît sur ton compte.\n\n` +
-    `🔐 Tes identifiants sont utilisés uniquement pour la connexion automatique.`,
-    {
+  if (user && user.identifiant) {
+    // Profil déjà existant
+    await bot.sendMessage(chatId, "👤 *Ton profil*", {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "➕ Ajouter mon compte", callback_data: "add_account" }]
+          [{ text: "🔐 Mon profil", callback_data: "my_profile" }],
+          [{ text: "♻️ Réinitialiser mon profil", callback_data: "reset_profile" }]
         ]
       }
-    }
-  );
-
-  users[chatId].messagesToDelete.push(msg.message_id);
+    });
+  } else {
+    await bot.sendMessage(
+      chatId,
+      `👋 *Bienvenue sur Pronotifs*\n\n` +
+      `Pour commencer, ajoute ton compte.\n\n` +
+      `📨 Tu devras envoyer *identifiant + mot de passe* en un seul message.`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "➕ Ajouter mon compte", callback_data: "add_account" }]
+          ]
+        }
+      }
+    );
+  }
 }
 
 // ===== Commandes =====
 bot.onText(/\/start|\/accueil/, async (msg) => {
-  await showAccueil(msg.chat.id);
+  await accueil(msg.chat.id);
 });
 
 bot.onText(/\/help/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    `📖 *Commandes disponibles*\n\n` +
-    `/start ou /accueil – Accueil du bot\n` +
-    `/help – Afficher cette aide\n\n` +
-    `ℹ️ Utilise les boutons pour ajouter ou modifier ton compte.`,
+    `📖 *Commandes*\n\n` +
+    `/start ou /accueil – Accueil\n` +
+    `/help – Aide\n\n` +
+    `ℹ️ Utilise les boutons pour gérer ton profil.`,
     { parse_mode: "Markdown" }
   );
 });
@@ -66,63 +66,102 @@ bot.onText(/\/help/, (msg) => {
 // ===== Boutons =====
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
-
-  if (!users[chatId]) users[chatId] = { messagesToDelete: [] };
+  const user = users[chatId] || {};
 
   if (query.data === "add_account") {
-    await cleanChat(chatId);
-    users[chatId].step = "identifiant";
+    users[chatId] = { waitingCredentials: true };
 
-    const msg = await bot.sendMessage(
+    await bot.sendMessage(
       chatId,
-      "🆔 *Entre ton identifiant* :",
+      "✍️ *Envoie maintenant tes identifiants sous la forme :*\n\n`identifiant motdepasse`",
       { parse_mode: "Markdown" }
     );
-
-    users[chatId].messagesToDelete.push(msg.message_id);
   }
 
-  await bot.answerCallbackQuery(query.id);
+  if (query.data === "my_profile") {
+    await bot.sendMessage(chatId, "🔐 *Profil enregistré*", {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "👁 Afficher les infos", callback_data: "show_profile" }]
+        ]
+      }
+    });
+  }
+
+  if (query.data === "show_profile") {
+    await bot.sendMessage(
+      chatId,
+      `🧾 *Détails du profil*\n\n` +
+      `🆔 Identifiant : \`${user.identifiant}\`\n` +
+      `🔑 Mot de passe : \`${user.password}\``,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  if (query.data === "reset_profile") {
+    await bot.sendMessage(chatId, "⚠️ *Confirmer la réinitialisation ?*", {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Oui, supprimer", callback_data: "confirm_reset" }],
+          [{ text: "❌ Annuler", callback_data: "cancel_reset" }]
+        ]
+      }
+    });
+  }
+
+  if (query.data === "confirm_reset") {
+    delete users[chatId];
+
+    // Nettoyage discussion (best effort)
+    try {
+      for (let i = query.message.message_id; i > 0; i--) {
+        await bot.deleteMessage(chatId, i);
+      }
+    } catch {}
+
+    await bot.sendMessage(chatId, "🗑️ Profil supprimé.\n\nTape /start pour recommencer.");
+  }
+
+  if (query.data === "cancel_reset") {
+    await accueil(chatId);
+  }
+
+  bot.answerCallbackQuery(query.id);
 });
 
-// ===== Réception messages =====
+// ===== Messages (ID + MDP) =====
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  if (!users[chatId] || !users[chatId].step) return;
+  const user = users[chatId];
 
-  // Supprimer le message de l'utilisateur (sécurité)
+  if (!user || !user.waitingCredentials) return;
+
+  const parts = msg.text.trim().split(" ");
+  if (parts.length < 2) {
+    await bot.sendMessage(chatId, "❌ Format invalide.\nUtilise : `identifiant motdepasse`", {
+      parse_mode: "Markdown"
+    });
+    return;
+  }
+
+  // Supprimer le message sensible
   try {
     await bot.deleteMessage(chatId, msg.message_id);
   } catch {}
 
-  if (users[chatId].step === "identifiant") {
-    users[chatId].identifiant = msg.text;
-    users[chatId].step = "password";
+  users[chatId] = {
+    identifiant: parts[0],
+    password: parts.slice(1).join(" "),
+    waitingCredentials: false
+  };
 
-    const m = await bot.sendMessage(
-      chatId,
-      "🔑 *Entre ton mot de passe* :",
-      { parse_mode: "Markdown" }
-    );
+  await bot.sendMessage(chatId, "✅ *Profil enregistré avec succès !*", {
+    parse_mode: "Markdown"
+  });
 
-    users[chatId].messagesToDelete.push(m.message_id);
-    return;
-  }
-
-  if (users[chatId].step === "password") {
-    users[chatId].password = msg.text;
-    users[chatId].step = null;
-
-    await cleanChat(chatId);
-
-    bot.sendMessage(
-      chatId,
-      "✅ *Profil enregistré avec succès !*\n\nTu pourras modifier ton compte à tout moment avec /accueil",
-      { parse_mode: "Markdown" }
-    );
-
-    console.log("📦 Profil enregistré :", chatId, users[chatId]);
-  }
+  await accueil(chatId);
 });
 
 // ===== Serveur =====
