@@ -10,6 +10,7 @@ const { CookieJar } = require("tough-cookie");
 const { wrapper } = require("axios-cookiejar-support");
 
 // ================= CONFIG =================
+console.log("TELEGRAM_TOKEN =", process.env.TELEGRAM_TOKEN);
 const TelegramBot = require("node-telegram-bot-api");
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
