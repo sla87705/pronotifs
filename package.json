@@ -1,0 +1,15 @@
+{
+  "name": "pronote-telegram-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.63.0",
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.3",
+    "tough-cookie": "^4.1.3",
+    "axios-cookiejar-support": "^5.0.1"
+  }
+}
